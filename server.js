@@ -24,6 +24,7 @@ const morgan = require('morgan');
 const url = require('url');
 const { pipeline } = require('stream');
 const { createServer } = require('http');
+const path = require('path');
 
 const PORT = process.env.PORT || 8080;
 const AUTH_USER = process.env.PROXY_USER || null; // set to enable basic auth
@@ -48,8 +49,7 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
-// Static frontend files
-app.use(express.static('public'));
+app.set('trust proxy', 1);
 
 // Simple auth middleware (if credentials set)
 function authMiddleware(req, res, next) {
@@ -62,6 +62,27 @@ function authMiddleware(req, res, next) {
   return next();
 }
 app.use(authMiddleware);
+
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+const ALLOWLIST = (process.env.PROXY_ALLOWLIST || '')
+  .split(',')
+  .map((entry) => entry.trim())
+  .filter(Boolean);
+
+function hostAllowed(hostname) {
+  if (!ALLOWLIST.length) return true;
+  return ALLOWLIST.some((entry) => {
+    if (entry === '*') return true;
+    if (entry.startsWith('.')) {
+      const suffix = entry.slice(1);
+      return hostname === suffix || hostname.endsWith(`.${suffix}`);
+    }
+    return hostname === entry;
+  });
+}
 
 // Utility: build proxy URL for links
 function proxyFor(targetUrl) {
@@ -77,18 +98,44 @@ async function rewriteHtmlBody(htmlText, baseUrl) {
     ['a', 'href'],
     ['link', 'href'],
     ['img', 'src'],
+    ['img', 'srcset'],
     ['script', 'src'],
     ['iframe', 'src'],
     ['form', 'action'],
     ['source', 'src'],
+    ['source', 'srcset'],
     ['video', 'src'],
-    ['audio', 'src']
+    ['audio', 'src'],
+    ['video', 'poster'],
+    ['audio', 'poster'],
+    ['object', 'data']
   ];
 
   // helper to resolve and rewrite
   function rewriteAttr(elem, attr) {
     const orig = $(elem).attr(attr);
     if (!orig) return;
+    if (attr === 'srcset') {
+      const rewrittenSrcset = orig
+        .split(',')
+        .map((segment) => {
+          const trimmed = segment.trim();
+          if (!trimmed) return trimmed;
+          const parts = trimmed.split(/\s+/);
+          const urlPart = parts.shift();
+          if (!urlPart) return trimmed;
+          try {
+            const resolved = new url.URL(urlPart, baseUrl).toString();
+            const proxied = proxyFor(resolved);
+            return [proxied, ...parts].join(' ');
+          } catch (e) {
+            return trimmed;
+          }
+        })
+        .join(', ');
+      $(elem).attr(attr, rewrittenSrcset);
+      return;
+    }
     try {
       const resolved = new url.URL(orig, baseUrl).toString();
       $(elem).attr(attr, proxyFor(resolved));
@@ -128,19 +175,68 @@ async function rewriteHtmlBody(htmlText, baseUrl) {
     $(el).html(text);
   });
 
+  // Remove integrity attributes that will fail after rewriting
+  $('[integrity]').removeAttr('integrity');
+
+  // Rewrite <base> tags to ensure they keep routing through the proxy
+  $('base[href]').each((i, el) => {
+    const href = $(el).attr('href');
+    try {
+      const resolved = new url.URL(href, baseUrl).toString();
+      $(el).attr('href', proxyFor(resolved));
+    } catch (e) {
+      $(el).remove();
+    }
+  });
+
+  // Strip client-side CSP or frame blocking meta tags
+  $('meta[http-equiv]').each((i, el) => {
+    const value = ($(el).attr('http-equiv') || '').toLowerCase();
+    if (['content-security-policy', 'x-frame-options', 'frame-ancestors'].includes(value)) {
+      $(el).remove();
+      return;
+    }
+    if (value === 'refresh') {
+      const content = $(el).attr('content');
+      if (!content) return;
+      const match = content.match(/^(\s*\d+\s*;\s*url=)(.+)$/i);
+      if (match) {
+        try {
+          const resolved = new url.URL(match[2], baseUrl).toString();
+          $(el).attr('content', `${match[1]}${proxyFor(resolved)}`);
+        } catch (e) {
+          // leave content as-is when invalid
+        }
+      }
+    }
+  });
+
   // inject a small script to rewrite XHR/fetch requests to go through proxy if needed
   const xhrPatch = `
   <script>
     (function(){
+      const rewriteAbsolute = (inputUrl) => {
+        if (!inputUrl) return inputUrl;
+        if (inputUrl.startsWith('/proxy?url=') || inputUrl.startsWith('/ws?url=')) return inputUrl;
+        if (/^https?:/i.test(inputUrl) && !inputUrl.startsWith(window.location.origin)) {
+          return '/proxy?url=' + encodeURIComponent(inputUrl);
+        }
+        if (/^wss?:/i.test(inputUrl) && !inputUrl.startsWith(window.location.origin)) {
+          return '/ws?url=' + encodeURIComponent(inputUrl);
+        }
+        return inputUrl;
+      };
+
       const origFetch = window.fetch;
       window.fetch = function(input, init){
         try{
           let u = (typeof input === 'string') ? input : input.url;
-          if (u && (u.startsWith('http:') || u.startsWith('https:')) && !u.startsWith(location.origin)) {
-            // route through proxy endpoint
-            const prox = '/proxy?url=' + encodeURIComponent(u);
-            if (typeof input === 'string') return origFetch(prox, init);
-            input = new Request(prox, input);
+          if (u) {
+            const prox = rewriteAbsolute(u);
+            if (prox !== u) {
+              if (typeof input === 'string') return origFetch(prox, init);
+              input = new Request(prox, input);
+            }
           }
         } catch(e){}
         return origFetch(input, init);
@@ -150,12 +246,94 @@ async function rewriteHtmlBody(htmlText, baseUrl) {
       const origOpen = XMLHttpRequest.prototype.open;
       XMLHttpRequest.prototype.open = function(method, urlArg){
         try{
-          if (typeof urlArg === 'string' && (urlArg.startsWith('http:') || urlArg.startsWith('https:')) && !urlArg.startsWith(location.origin)) {
-            arguments[1] = '/proxy?url=' + encodeURIComponent(urlArg);
+          if (typeof urlArg === 'string') {
+            const prox = rewriteAbsolute(urlArg);
+            if (prox !== urlArg) arguments[1] = prox;
           }
         }catch(e){}
         return origOpen.apply(this, arguments);
       };
+
+      const origOpenWindow = window.open;
+      window.open = function(target, name, specs){
+        if (typeof target === 'string') {
+          const prox = rewriteAbsolute(target);
+          if (prox !== target) target = prox;
+        }
+        return origOpenWindow ? origOpenWindow.call(this, target, name, specs) : null;
+      };
+
+      const assignLike = (fn) => function(url){
+        const original = String(url);
+        const prox = rewriteAbsolute(original);
+        return fn.call(this, prox === original ? url : prox);
+      };
+      const loc = window.location;
+      if (loc) {
+        if (typeof loc.assign === 'function') loc.assign = assignLike(loc.assign);
+        if (typeof loc.replace === 'function') loc.replace = assignLike(loc.replace);
+        const hrefDescriptor = Object.getOwnPropertyDescriptor(Location.prototype, 'href');
+        if (hrefDescriptor && typeof hrefDescriptor.set === 'function') {
+          Object.defineProperty(loc, 'href', {
+            configurable: false,
+            enumerable: false,
+            set(value){
+              const original = String(value);
+              const prox = rewriteAbsolute(original);
+              return hrefDescriptor.set.call(loc, prox === original ? value : prox);
+            },
+            get(){
+              return hrefDescriptor.get.call(loc);
+            }
+          });
+        }
+      }
+
+      const origPushState = history.pushState;
+      history.pushState = function(state, title, urlArg){
+        if (urlArg != null) {
+          const original = String(urlArg);
+          const prox = rewriteAbsolute(original);
+          if (prox !== original) urlArg = prox;
+        }
+        return origPushState.call(this, state, title, urlArg);
+      };
+
+      const origReplaceState = history.replaceState;
+      history.replaceState = function(state, title, urlArg){
+        if (urlArg != null) {
+          const original = String(urlArg);
+          const prox = rewriteAbsolute(original);
+          if (prox !== original) urlArg = prox;
+        }
+        return origReplaceState.call(this, state, title, urlArg);
+      };
+
+      const NativeWebSocket = window.WebSocket;
+      if (NativeWebSocket) {
+        const WrappedWebSocket = function(target, protocols){
+          if (typeof target === 'string') {
+            const prox = rewriteAbsolute(target);
+            if (prox !== target) target = prox;
+          }
+          return new NativeWebSocket(target, protocols);
+        };
+        WrappedWebSocket.prototype = NativeWebSocket.prototype;
+        window.WebSocket = WrappedWebSocket;
+      }
+
+      const NativeEventSource = window.EventSource;
+      if (NativeEventSource) {
+        const WrappedEventSource = function(target, init){
+          if (typeof target === 'string') {
+            const prox = rewriteAbsolute(target);
+            if (prox !== target) target = prox;
+          }
+          return new NativeEventSource(target, init);
+        };
+        WrappedEventSource.prototype = NativeEventSource.prototype;
+        window.EventSource = WrappedEventSource;
+      }
     })();
   </script>
   `;
@@ -191,18 +369,31 @@ app.all('/proxy', async (req, res) => {
     return res.status(400).send('Invalid target URL');
   }
 
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    return res.status(400).send('Only http and https protocols are supported');
+  }
+
+  if (!hostAllowed(parsed.hostname)) {
+    return res.status(403).send('Target host is not permitted');
+  }
+
   // Build fetch options from incoming request
+  const outgoingHeaders = {};
+  for (const [key, value] of Object.entries(req.headers)) {
+    const lower = key.toLowerCase();
+    if (['host', 'content-length', 'connection'].includes(lower)) continue;
+    if (lower === 'accept-encoding') continue;
+    outgoingHeaders[key] = value;
+  }
+  outgoingHeaders['referer'] = parsed.toString();
+  outgoingHeaders['origin'] = parsed.origin;
+
   const fetchOptions = {
     method: req.method,
-    headers: Object.assign({}, req.headers),
+    headers: outgoingHeaders,
     redirect: 'follow',
     compress: true,
   };
-
-  // Remove host header to prevent issues
-  delete fetchOptions.headers.host;
-  // Remove our own cookies when forwarding unless you have a reason
-  // delete fetchOptions.headers.cookie;
 
   // For POST/PUT, pipe body
   if (req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'DELETE') {
@@ -259,8 +450,23 @@ app.all('/proxy', async (req, res) => {
 app.get('/raw', async (req, res) => {
   const target = req.query.url;
   if (!target) return res.status(400).send('Missing url param');
+  let parsed;
   try {
-    const r = await fetch(target);
+    parsed = new url.URL(target);
+  } catch (e) {
+    return res.status(400).send('Invalid target URL');
+  }
+
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    return res.status(400).send('Only http and https protocols are supported');
+  }
+
+  if (!hostAllowed(parsed.hostname)) {
+    return res.status(403).send('Target host is not permitted');
+  }
+
+  try {
+    const r = await fetch(parsed.toString());
     const headers = sanitizeHeaders(Object.fromEntries(r.headers.entries()));
     for (const [k, v] of Object.entries(headers)) res.setHeader(k, v);
     res.status(r.status);
@@ -293,9 +499,30 @@ server.on('upgrade', (req, socket, head) => {
     return;
   }
 
+  let parsed;
+  try {
+    parsed = new url.URL(targetUrl);
+  } catch (e) {
+    socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+
+  if (!['ws:', 'wss:'].includes(parsed.protocol)) {
+    socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+
+  if (!hostAllowed(parsed.hostname)) {
+    socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+
   // Build a fake request for proxying; http-proxy can use the original req
   try {
-    proxy.ws(req, socket, head, { target: targetUrl, changeOrigin: true }, (err) => {
+    proxy.ws(req, socket, head, { target: parsed.toString(), changeOrigin: true }, (err) => {
       if (err) {
         console.error('ws proxy err', err);
         try { socket.end(); } catch (e) {}

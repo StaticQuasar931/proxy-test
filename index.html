@@ -2,89 +2,678 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Proxy Demo — School IT Project</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Quiet Portal Proxy</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    :root { --accent:#0b74de; --muted:#666; }
-    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial; margin:0; padding:18px; background:#f7f9fc; }
-    header { display:flex; align-items:center; gap:12px; margin-bottom:12px; }
-    h1 { font-size:18px; margin:0; }
-    .controls { display:flex; gap:8px; align-items:center; width:100%; }
-    input[type="text"] { flex:1; padding:10px 12px; font-size:14px; border:1px solid #ccd; border-radius:6px; }
-    button { background:var(--accent); color:#fff; border:none; padding:9px 12px; border-radius:6px; cursor:pointer; }
-    button.secondary { background:#fff; color:var(--accent); border:1px solid #cfe; }
-    .frame-wrap { margin-top:12px; width:100%; height:76vh; border:1px solid #dce; border-radius:6px; overflow:hidden; }
-    iframe { width:100%; height:100%; border:0; display:block; background:white; }
-    .meta { margin-top:8px; color:var(--muted); font-size:13px; }
-    .note { color:#b04; font-size:12px; margin-left:6px; }
-    .small { font-size:12px; color:#888; }
+    :root {
+      color-scheme: dark;
+      --bg: #0c0f1a;
+      --bg-alt: rgba(20, 24, 38, 0.85);
+      --panel: rgba(26, 30, 46, 0.94);
+      --accent: #8d7bff;
+      --accent-soft: rgba(141, 123, 255, 0.45);
+      --accent-strong: rgba(141, 123, 255, 0.75);
+      --text: #eef1ff;
+      --muted: #8f95b2;
+      --border: rgba(255, 255, 255, 0.08);
+      --shadow: 0 24px 48px rgba(5, 8, 18, 0.55);
+      --hide-art: url('https://res.cloudinary.com/demo/image/upload/v1700000000/spinner.gif');
+      --home-art: url('https://res.cloudinary.com/demo/image/upload/v1700000000/home-icon.png');
+      --menu-art: url('https://res.cloudinary.com/demo/image/upload/v1700000000/menu-icon.png');
+      --overlay-art: url('https://res.cloudinary.com/demo/image/upload/v1700000000/spinner.gif');
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: 'Inter', 'Segoe UI', Roboto, sans-serif;
+      background: radial-gradient(circle at 15% 20%, rgba(114, 83, 255, 0.25), transparent 55%),
+        radial-gradient(circle at 85% 25%, rgba(64, 211, 255, 0.18), transparent 60%),
+        var(--bg);
+      color: var(--text);
+      padding: clamp(16px, 3vw, 32px);
+      transition: background 0.4s ease;
+    }
+
+    body.menu-open {
+      overflow: hidden;
+    }
+
+    .app-shell {
+      backdrop-filter: blur(20px);
+      background: var(--panel);
+      border-radius: 28px;
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow);
+      padding: 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 22px;
+      min-height: calc(100vh - clamp(32px, 6vw, 64px));
+      position: relative;
+      overflow: hidden;
+    }
+
+    .top-bar {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 18px;
+      align-items: center;
+    }
+
+    .brand {
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand::before {
+      content: "";
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 25% 25%, rgba(255, 255, 255, 0.75), rgba(141, 123, 255, 0.15));
+      box-shadow: 0 0 24px rgba(141, 123, 255, 0.5);
+    }
+
+    .address {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: rgba(12, 15, 26, 0.5);
+      border-radius: 16px;
+      padding: 10px 16px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      position: relative;
+    }
+
+    .address::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: 16px;
+      background: linear-gradient(120deg, rgba(141, 123, 255, 0.25), transparent 60%);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+
+    .address:focus-within::after {
+      opacity: 1;
+    }
+
+    .address input[type="text"] {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: var(--text);
+      font-size: 16px;
+      padding: 4px 0;
+      outline: none;
+      font-weight: 500;
+    }
+
+    .address input::placeholder {
+      color: rgba(238, 241, 255, 0.32);
+    }
+
+    .address button {
+      border: none;
+      border-radius: 12px;
+      padding: 10px 18px;
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .address button.primary {
+      background: linear-gradient(135deg, var(--accent), #5f9bff);
+      color: #070912;
+      box-shadow: 0 10px 24px rgba(141, 123, 255, 0.38);
+    }
+
+    .address button.ghost {
+      background: rgba(141, 123, 255, 0.14);
+      color: var(--text);
+      border: 1px solid rgba(141, 123, 255, 0.28);
+      box-shadow: 0 10px 22px rgba(15, 20, 38, 0.45);
+    }
+
+    .address button:hover {
+      transform: translateY(-2px) scale(1.01);
+      box-shadow: 0 18px 32px rgba(141, 123, 255, 0.4);
+    }
+
+    .address button:active {
+      transform: translateY(0);
+      box-shadow: 0 8px 16px rgba(141, 123, 255, 0.25);
+    }
+
+    .view {
+      flex: 1;
+      border-radius: 22px;
+      overflow: hidden;
+      background: rgba(6, 9, 18, 0.75);
+      border: 1px solid rgba(255, 255, 255, 0.04);
+      position: relative;
+    }
+
+    #mainFrame {
+      width: 100%;
+      height: 100%;
+      border: none;
+      background: rgba(10, 14, 24, 0.85);
+    }
+
+    .note-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      color: var(--muted);
+      font-size: 13px;
+      letter-spacing: 0.01em;
+    }
+
+    .note-row strong {
+      color: rgba(255, 255, 255, 0.8);
+      font-weight: 600;
+    }
+
+    .floating-bar {
+      position: fixed;
+      right: clamp(12px, 4vw, 40px);
+      bottom: clamp(12px, 4vw, 40px);
+      background: var(--bg-alt);
+      border-radius: 20px;
+      padding: 14px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      box-shadow: 0 20px 42px rgba(3, 5, 12, 0.45);
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(18px) scale(0.97);
+      transition: opacity 0.35s ease, transform 0.35s ease;
+      z-index: 50;
+    }
+
+    .floating-bar.is-visible {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translateY(0) scale(1);
+    }
+
+    .tool-btn {
+      width: 48px;
+      height: 48px;
+      border-radius: 16px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background-color: rgba(14, 16, 24, 0.9);
+      background-position: center;
+      background-size: 70%;
+      background-repeat: no-repeat;
+      cursor: pointer;
+      transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+    }
+
+    .tool-btn:hover {
+      transform: translateY(-2px) scale(1.05);
+      border-color: rgba(141, 123, 255, 0.6);
+      box-shadow: 0 16px 32px rgba(141, 123, 255, 0.4);
+    }
+
+    .tool-btn:active {
+      transform: translateY(0) scale(0.98);
+    }
+
+    .hide-btn {
+      background-image: var(--hide-art);
+    }
+
+    .home-btn {
+      background-image: var(--home-art);
+    }
+
+    .menu-btn {
+      background-image: var(--menu-art);
+    }
+
+    .overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(6, 8, 18, 0.92);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 24px;
+      z-index: 100;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.35s ease, visibility 0.35s ease;
+      text-align: center;
+      padding: 24px;
+    }
+
+    .overlay.active {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    .overlay-art {
+      width: min(220px, 35vw);
+      aspect-ratio: 1;
+      background-image: var(--overlay-art);
+      background-repeat: no-repeat;
+      background-position: center;
+      background-size: contain;
+      filter: drop-shadow(0 0 40px rgba(141, 123, 255, 0.7));
+      animation: slow-rotate 6s linear infinite;
+    }
+
+    @keyframes slow-rotate {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    .overlay p {
+      color: rgba(255, 255, 255, 0.85);
+      font-size: 16px;
+      max-width: 380px;
+      line-height: 1.5;
+      letter-spacing: 0.04em;
+    }
+
+    .slide-menu {
+      position: fixed;
+      top: 0;
+      right: 0;
+      width: min(340px, 90vw);
+      height: 100vh;
+      background: rgba(14, 16, 26, 0.96);
+      border-left: 1px solid rgba(255, 255, 255, 0.07);
+      backdrop-filter: blur(22px);
+      transform: translateX(100%);
+      transition: transform 0.35s cubic-bezier(0.6, 0, 0.2, 1);
+      z-index: 90;
+      display: flex;
+      flex-direction: column;
+      padding: 26px 24px 32px;
+      gap: 18px;
+      box-shadow: -12px 0 32px rgba(3, 5, 12, 0.55);
+    }
+
+    .slide-menu.active {
+      transform: translateX(0);
+    }
+
+    .menu-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .menu-header h2 {
+      margin: 0;
+      font-size: 18px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.85);
+    }
+
+    .close-btn {
+      width: 34px;
+      height: 34px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: rgba(12, 15, 26, 0.8);
+      color: rgba(255, 255, 255, 0.75);
+      font-size: 20px;
+      cursor: pointer;
+      line-height: 1;
+      transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+
+    .close-btn:hover {
+      transform: rotate(90deg);
+      border-color: rgba(141, 123, 255, 0.6);
+    }
+
+    .menu-links {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      flex: 1;
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+
+    .menu-links::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .menu-links::-webkit-scrollbar-thumb {
+      background: rgba(141, 123, 255, 0.35);
+      border-radius: 999px;
+    }
+
+    .menu-link {
+      border: none;
+      border-radius: 14px;
+      padding: 14px 16px;
+      text-align: left;
+      background: linear-gradient(120deg, rgba(141, 123, 255, 0.12), rgba(141, 123, 255, 0.04));
+      color: rgba(255, 255, 255, 0.92);
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+      box-shadow: inset 0 0 0 1px rgba(141, 123, 255, 0.2);
+      transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+    }
+
+    .menu-link:hover {
+      transform: translateX(4px) scale(1.01);
+      background: linear-gradient(120deg, rgba(141, 123, 255, 0.24), rgba(141, 123, 255, 0.08));
+      box-shadow: inset 0 0 0 1px rgba(141, 123, 255, 0.45);
+    }
+
+    .menu-footer {
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.55);
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+    }
+
+    .menu-scrim {
+      position: fixed;
+      inset: 0;
+      background: rgba(6, 8, 18, 0.6);
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.35s ease, visibility 0.35s ease;
+      z-index: 80;
+    }
+
+    .menu-scrim.active {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    @media (max-width: 960px) {
+      body {
+        padding: 18px;
+      }
+
+      .app-shell {
+        padding: 20px;
+        border-radius: 20px;
+        gap: 18px;
+      }
+
+      .top-bar {
+        grid-template-columns: 1fr;
+      }
+
+      .brand {
+        justify-content: center;
+      }
+
+      .address {
+        flex-wrap: wrap;
+        gap: 10px;
+        padding: 12px;
+      }
+
+      .address button {
+        flex: 1 0 120px;
+      }
+
+      .floating-bar {
+        right: 16px;
+        left: 16px;
+        justify-content: center;
+      }
+    }
   </style>
 </head>
 <body>
-  <header>
-    <h1>School Proxy — Project Demo</h1>
-  </header>
-
-  <form id="form" class="controls" onsubmit="return false;">
-    <input id="url" type="text" placeholder="Enter URL (e.g. https://www.google.com)"/>
-    <button id="go">Go</button>
-    <button id="openNew" class="secondary" title="Open proxied URL in new tab">Open</button>
-  </form>
-
-  <div class="meta small">Tip: use full URL (include https://). For WebSocket games, use the Join WebSocket button (if provided by your instructor).</div>
-
-  <div class="frame-wrap">
-    <iframe id="frame" sandbox="allow-scripts allow-forms allow-same-origin"></iframe>
+  <div class="app-shell">
+    <header class="top-bar">
+      <div class="brand">Nebula Shell</div>
+      <form class="address" id="navForm" autocomplete="off">
+        <input id="urlInput" type="text" inputmode="url" placeholder="Enter or paste a full URL" aria-label="Destination address" />
+        <button type="submit" class="primary" id="goButton">Launch</button>
+        <button type="button" class="ghost" id="newTabButton">New Tab</button>
+      </form>
+    </header>
+    <section class="view">
+      <iframe id="mainFrame" sandbox="allow-scripts allow-forms allow-same-origin allow-popups"></iframe>
+    </section>
+    <div class="note-row">
+      <span><strong>Status:</strong> navigation stays inside this window.</span>
+      <span>Tip: allow pop-ups to enable the quick menu.</span>
+    </div>
   </div>
 
+  <div class="floating-bar" id="floatingBar">
+    <button class="tool-btn hide-btn" data-action="hide" title="Hide Screen"></button>
+    <button class="tool-btn home-btn" data-action="home" title="Return to Hub"></button>
+    <button class="tool-btn menu-btn" data-action="menu" title="Open Quick Menu"></button>
+  </div>
+
+  <div class="overlay" id="screenShield" role="dialog" aria-live="polite" aria-label="Screen cover">
+    <div class="overlay-art"></div>
+    <p>Press Y + U + I together or tap Hide Screen again to return.</p>
+  </div>
+
+  <aside class="slide-menu" id="slideMenu" aria-hidden="true">
+    <div class="menu-header">
+      <h2>Quick Hub</h2>
+      <button class="close-btn" id="closeMenu" aria-label="Close menu">×</button>
+    </div>
+    <div class="menu-links" id="menuLinks"></div>
+    <div class="menu-footer">Each link opens in a neutral tab.</div>
+  </aside>
+  <div class="menu-scrim" id="menuScrim"></div>
+
   <script>
-    const input = document.getElementById('url');
-    const go = document.getElementById('go');
-    const openNew = document.getElementById('openNew');
-    const frame = document.getElementById('frame');
+    (function () {
+      const HOME_URL = 'https://sites.google.com/view/staticquasar931/gm3z';
+      const curatedLinks = [
+        { label: 'Portal One', url: 'https://k12guru.nl' },
+        { label: 'Grow a Garden', url: 'https://yandex.com/games/category/idle' },
+        { label: 'EggyCar', url: 'https://eggycaronline.io/' },
+        { label: 'Home Hub', url: HOME_URL }
+      ];
 
-    function proxify(u) {
-      return '/proxy?url=' + encodeURIComponent(u);
-    }
+      const navForm = document.getElementById('navForm');
+      const input = document.getElementById('urlInput');
+      const mainFrame = document.getElementById('mainFrame');
+      const floatingBar = document.getElementById('floatingBar');
+      const screenShield = document.getElementById('screenShield');
+      const menu = document.getElementById('slideMenu');
+      const menuScrim = document.getElementById('menuScrim');
+      const menuLinks = document.getElementById('menuLinks');
+      const closeMenu = document.getElementById('closeMenu');
+      const goButton = document.getElementById('goButton');
+      const newTabButton = document.getElementById('newTabButton');
 
-    function validUrl(s) {
-      try {
-        new URL(s);
-        return true;
-      } catch (e) {
-        return false;
+      const hideButton = floatingBar.querySelector('[data-action="hide"]');
+      const homeButton = floatingBar.querySelector('[data-action="home"]');
+      const menuButton = floatingBar.querySelector('[data-action="menu"]');
+
+      const overlayKeys = new Set();
+      let overlayActive = false;
+      let hoverTimeout = null;
+
+      function ensureAbsolute(urlValue) {
+        try {
+          const parsed = new URL(urlValue);
+          return parsed.toString();
+        } catch (err) {
+          return `https://${urlValue}`;
+        }
       }
-    }
 
-    go.addEventListener('click', () => {
-      const v = input.value.trim();
-      if (!v) return alert('Enter a URL');
-      const urlStr = validUrl(v) ? v : ('https://' + v);
-      frame.src = proxify(urlStr);
-    });
+      function proxify(targetUrl) {
+        return '/proxy?url=' + encodeURIComponent(targetUrl);
+      }
 
-    openNew.addEventListener('click', () => {
-      const v = input.value.trim();
-      if (!v) return alert('Enter a URL');
-      const urlStr = validUrl(v) ? v : ('https://' + v);
-      // Open proxied URL in a new tab (so teacher can inspect network)
-      window.open(proxify(urlStr), '_blank');
-    });
+      function setFrame(targetUrl) {
+        mainFrame.src = proxify(targetUrl);
+      }
 
-    // quick keyboard: Enter runs Go
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); go.click(); }
-    });
+      function toggleOverlay(forceState) {
+        overlayActive = typeof forceState === 'boolean' ? forceState : !overlayActive;
+        screenShield.classList.toggle('active', overlayActive);
+      }
 
-    // small convenience: example URL prefill
-    input.value = 'https://www.google.com';
-    // auto-load on open
-    window.addEventListener('load', () => { setTimeout(() => go.click(), 200); });
+      function openMenuPanel() {
+        document.body.classList.add('menu-open');
+        menu.classList.add('active');
+        menu.setAttribute('aria-hidden', 'false');
+        menuScrim.classList.add('active');
+      }
 
-    // warn before leaving (user preference in your project guidelines)
-    window.onbeforeunload = function() {
-      return "Leaving will stop any active sessions";
-    };
+      function closeMenuPanel() {
+        document.body.classList.remove('menu-open');
+        menu.classList.remove('active');
+        menu.setAttribute('aria-hidden', 'true');
+        menuScrim.classList.remove('active');
+      }
+
+      function openInNeutralTab(label, targetUrl) {
+        const win = window.open('about:blank', '_blank', 'noopener=yes');
+        if (!win) {
+          alert('Please enable pop-ups for the quick menu.');
+          return;
+        }
+        const proxied = proxify(targetUrl);
+        const safeLabel = label.replace(/[&<]/g, (ch) => (ch === '&' ? '&amp;' : '&lt;'));
+        win.document.write(`<!doctype html><html lang="en"><head><meta charset="utf-8" /><title>${safeLabel}</title><style>html,body{margin:0;height:100%;background:#060816;color:#fff;font-family:sans-serif;}iframe{border:0;width:100%;height:100%;background:#0a0d18;}</style></head><body><iframe src="${proxied}" sandbox="allow-scripts allow-forms allow-same-origin allow-popups" allow="fullscreen"></iframe></body></html>`);
+        win.document.close();
+        closeMenuPanel();
+      }
+
+      function handleNavSubmit(event) {
+        event.preventDefault();
+        const value = input.value.trim();
+        if (!value) {
+          alert('Enter a valid URL.');
+          return;
+        }
+        const absolute = ensureAbsolute(value);
+        setFrame(absolute);
+      }
+
+      function handleNewTab() {
+        const value = input.value.trim();
+        if (!value) {
+          alert('Enter a valid URL.');
+          return;
+        }
+        const absolute = ensureAbsolute(value);
+        window.open(proxify(absolute), '_blank', 'noopener=yes');
+      }
+
+      navForm.addEventListener('submit', handleNavSubmit);
+      goButton.addEventListener('click', handleNavSubmit);
+      newTabButton.addEventListener('click', handleNewTab);
+
+      hideButton.addEventListener('click', () => {
+        toggleOverlay();
+      });
+
+      homeButton.addEventListener('click', () => {
+        input.value = HOME_URL;
+        setFrame(HOME_URL);
+      });
+
+      menuButton.addEventListener('click', () => {
+        if (menu.classList.contains('active')) {
+          closeMenuPanel();
+        } else {
+          openMenuPanel();
+        }
+      });
+
+      closeMenu.addEventListener('click', closeMenuPanel);
+      menuScrim.addEventListener('click', closeMenuPanel);
+
+      document.addEventListener('keydown', (event) => {
+        const key = event.key.toLowerCase();
+        if (['y', 'u', 'i'].includes(key)) {
+          overlayKeys.add(key);
+          if (overlayKeys.has('y') && overlayKeys.has('u') && overlayKeys.has('i')) {
+            toggleOverlay();
+          }
+        }
+        if (event.key === 'Escape') {
+          if (menu.classList.contains('active')) closeMenuPanel();
+          if (overlayActive) toggleOverlay(false);
+        }
+      });
+
+      document.addEventListener('keyup', (event) => {
+        overlayKeys.delete(event.key.toLowerCase());
+      });
+
+      document.addEventListener('mousemove', (event) => {
+        if (overlayActive) return;
+        if (event.clientY >= window.innerHeight - 120) {
+          floatingBar.classList.add('is-visible');
+          if (hoverTimeout) clearTimeout(hoverTimeout);
+        } else {
+          if (hoverTimeout) clearTimeout(hoverTimeout);
+          hoverTimeout = setTimeout(() => {
+            floatingBar.classList.remove('is-visible');
+          }, 600);
+        }
+      });
+
+      floatingBar.addEventListener('mouseenter', () => {
+        if (hoverTimeout) clearTimeout(hoverTimeout);
+        floatingBar.classList.add('is-visible');
+      });
+
+      floatingBar.addEventListener('mouseleave', () => {
+        if (hoverTimeout) clearTimeout(hoverTimeout);
+        hoverTimeout = setTimeout(() => {
+          floatingBar.classList.remove('is-visible');
+        }, 600);
+      });
+
+      curatedLinks.forEach(({ label, url }) => {
+        const btn = document.createElement('button');
+        btn.className = 'menu-link';
+        btn.type = 'button';
+        btn.textContent = label;
+        btn.addEventListener('click', () => openInNeutralTab(label, url));
+        menuLinks.appendChild(btn);
+      });
+
+      input.value = HOME_URL;
+      setFrame(HOME_URL);
+
+      window.addEventListener('beforeunload', () => {
+        if (hoverTimeout) clearTimeout(hoverTimeout);
+      });
+    })();
   </script>
 </body>
 </html>
