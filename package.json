@@ -1,0 +1,21 @@
+{
+  "name": "school-proxy-project",
+  "version": "1.0.0",
+  "description": "Class project proxy (demo) - Node/Express + HTML rewriting + WebSocket proxy",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "basic-auth": "^2.0.1",
+    "cheerio": "^1.0.0-rc.12",
+    "express": "^4.18.2",
+    "express-rate-limit": "^6.8.0",
+    "http-proxy": "^1.18.1",
+    "node-fetch": "^2.6.7",
+    "morgan": "^1.10.0"
+  },
+  "engines": {
+    "node": ">=14"
+  }
+}
