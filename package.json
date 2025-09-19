@@ -4,7 +4,8 @@
   "description": "Class project proxy (demo) - Node/Express + HTML rewriting + WebSocket proxy",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "node --watch server.js"
   },
   "dependencies": {
     "basic-auth": "^2.0.1",
@@ -16,6 +17,6 @@
     "morgan": "^1.10.0"
   },
   "engines": {
-    "node": ">=14"
+    "node": ">=18"
   }
 }
