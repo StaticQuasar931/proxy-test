@@ -89,6 +89,50 @@ function proxyFor(targetUrl) {
   return `/proxy?url=${encodeURIComponent(targetUrl)}`;
 }
 
+function shouldSkipCssRewrite(raw) {
+  if (!raw) return true;
+  const lower = raw.trim().toLowerCase();
+  if (!lower) return true;
+  return (
+    lower.startsWith('data:') ||
+    lower.startsWith('javascript:') ||
+    lower.startsWith('about:') ||
+    lower.startsWith('mailto:') ||
+    lower.startsWith('#') ||
+    lower.startsWith('/proxy?url=')
+  );
+}
+
+function rewriteCssUrls(cssText, baseUrl) {
+  if (!cssText) return cssText;
+  const replaceUrl = (match, quote = '', rawUrl = '') => {
+    const original = rawUrl.trim();
+    if (!original || shouldSkipCssRewrite(original)) return match;
+    try {
+      const resolved = new url.URL(original, baseUrl).toString();
+      const proxied = proxyFor(resolved);
+      return `url(${quote}${proxied}${quote})`;
+    } catch (e) {
+      return match;
+    }
+  };
+
+  let rewritten = cssText.replace(/url\(\s*(['"]?)([^'"\)]+)\1\s*\)/gi, replaceUrl);
+  rewritten = rewritten.replace(/@import\s+(?:url\()?['"]?([^'"\)]+)['"]?\)?/gi, (match, rawUrl = '') => {
+    const original = rawUrl.trim();
+    if (!original || shouldSkipCssRewrite(original)) return match;
+    try {
+      const resolved = new url.URL(original, baseUrl).toString();
+      const proxied = proxyFor(resolved);
+      return `@import url("${proxied}")`;
+    } catch (e) {
+      return match;
+    }
+  });
+
+  return rewritten;
+}
+
 // Rewrite HTML so all links/resources point back through our proxy
 async function rewriteHtmlBody(htmlText, baseUrl) {
   const $ = cheerio.load(htmlText, { decodeEntities: false });
@@ -150,29 +194,15 @@ async function rewriteHtmlBody(htmlText, baseUrl) {
 
   // rewrite inline CSS url(...) occurrences in style attributes or style tags
   $('[style]').each((i, el) => {
-    let s = $(el).attr('style');
-    s = s.replace(/url\(['"]?([^'")]+)['"]?\)/g, (m, p1) => {
-      try {
-        const r = new url.URL(p1, baseUrl).toString();
-        return `url(${proxyFor(r)})`;
-      } catch (e) {
-        return m;
-      }
-    });
-    $(el).attr('style', s);
+    const s = $(el).attr('style');
+    if (!s) return;
+    $(el).attr('style', rewriteCssUrls(s, baseUrl));
   });
 
   $('style').each((i, el) => {
-    let text = $(el).html();
-    text = text.replace(/url\(['"]?([^'")]+)['"]?\)/g, (m, p1) => {
-      try {
-        const r = new url.URL(p1, baseUrl).toString();
-        return `url(${proxyFor(r)})`;
-      } catch (e) {
-        return m;
-      }
-    });
-    $(el).html(text);
+    const text = $(el).html();
+    if (!text) return;
+    $(el).html(rewriteCssUrls(text, baseUrl));
   });
 
   // Remove integrity attributes that will fail after rewriting
@@ -215,16 +245,35 @@ async function rewriteHtmlBody(htmlText, baseUrl) {
   const xhrPatch = `
   <script>
     (function(){
-      const rewriteAbsolute = (inputUrl) => {
+      const httpOrigin = window.location.origin;
+      const wsOrigin = (window.location.protocol === 'https:' ? 'wss://' : 'ws://') + window.location.host;
+      const skipSchemes = ['data:', 'javascript:', 'about:', 'mailto:'];
+      const rewriteAbsolute = (inputUrl, options = {}) => {
         if (!inputUrl) return inputUrl;
-        if (inputUrl.startsWith('/proxy?url=') || inputUrl.startsWith('/ws?url=')) return inputUrl;
-        if (/^https?:/i.test(inputUrl) && !inputUrl.startsWith(window.location.origin)) {
-          return '/proxy?url=' + encodeURIComponent(inputUrl);
+        const { type = 'http' } = options;
+        let normalized = String(inputUrl);
+        if (normalized.startsWith('/proxy?url=') || normalized.startsWith('/ws?url=')) return normalized;
+        const lower = normalized.toLowerCase();
+        if (skipSchemes.some((prefix) => lower.startsWith(prefix))) return normalized;
+        if (normalized.startsWith('//')) {
+          if (type === 'socket') {
+            normalized = (window.location.protocol === 'https:' ? 'wss:' : 'ws:') + normalized;
+          } else {
+            normalized = (window.location.protocol === 'https:' ? 'https:' : 'http:') + normalized;
+          }
         }
-        if (/^wss?:/i.test(inputUrl) && !inputUrl.startsWith(window.location.origin)) {
-          return '/ws?url=' + encodeURIComponent(inputUrl);
+        if (type === 'socket') {
+          if (/^wss?:/i.test(normalized)) {
+            if (normalized.startsWith(wsOrigin)) return normalized;
+            return '/ws?url=' + encodeURIComponent(normalized);
+          }
+          return normalized;
         }
-        return inputUrl;
+        if (/^https?:/i.test(normalized)) {
+          if (normalized.startsWith(httpOrigin)) return normalized;
+          return '/proxy?url=' + encodeURIComponent(normalized);
+        }
+        return normalized;
       };
 
       const origFetch = window.fetch;
@@ -313,7 +362,7 @@ async function rewriteHtmlBody(htmlText, baseUrl) {
       if (NativeWebSocket) {
         const WrappedWebSocket = function(target, protocols){
           if (typeof target === 'string') {
-            const prox = rewriteAbsolute(target);
+            const prox = rewriteAbsolute(target, { type: 'socket' });
             if (prox !== target) target = prox;
           }
           return new NativeWebSocket(target, protocols);
@@ -426,11 +475,18 @@ app.all('/proxy', async (req, res) => {
   for (const [k, v] of Object.entries(headers)) res.setHeader(k, v);
 
   const contentType = upstream.headers.get('content-type') || '';
+  const effectiveBase = upstream.url || target;
+
   if (contentType.includes('text/html')) {
     // rewrite HTML
     const text = await upstream.text();
-    const rewritten = await rewriteHtmlBody(text, target);
+    const rewritten = await rewriteHtmlBody(text, effectiveBase);
     res.setHeader('content-type', 'text/html; charset=utf-8');
+    return res.status(upstream.status).send(rewritten);
+  } else if (contentType.includes('text/css')) {
+    const text = await upstream.text();
+    const rewritten = rewriteCssUrls(text, effectiveBase);
+    res.setHeader('content-type', 'text/css; charset=utf-8');
     return res.status(upstream.status).send(rewritten);
   } else {
     // Stream other content (images, CSS, JS, video, etc.)
